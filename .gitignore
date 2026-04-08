@@ -1,0 +1,12 @@
+build/
+.venv/
+__pycache__/
+*.pyc
+*.o
+*.csv
+*.wcnf
+results/
+out_*/
+test_out/
+test_*/
+tmp_*

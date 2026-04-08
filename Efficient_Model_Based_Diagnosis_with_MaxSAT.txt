@@ -1,0 +1,435 @@
+                     Proceedings of the Twenty-Fourth International Joint Conference on Artificial Intelligence (IJCAI 2015)
+
+
+
+
+               Efficient Model Based Diagnosis with Maximum Satisfiability∗
+                       Joao Marques-Silva                                                 Mikoláš Janota
+                     INESC-ID, IST, Portugal                                              INESC-ID, IST
+                       UCD CASL, Ireland                                                 Lisbon, Portugal
+                    jpms@tecnico.ulisboa.pt                                          mikolas.janota@gmail.com
+
+                          Alexey Ignatiev                                                 Antonio Morgado
+                           INESC-ID, IST                                                   INESC-ID, IST
+                          Lisbon, Portugal                                                 Lisbon, Portugal
+                        aign@sat.inesc-id.pt                                           ajrmorgado@gmail.com
+
+                         Abstract                                           system’s inputs and outputs, not consistent with the expected
+                                                                            behavior, the goal of MBD is to identify a subset of the com-
+     Model-Based Diagnosis (MBD) finds a growing                            ponents (possibly minimal or of minimal cardinality), such
+     number of uses in different settings, which include                    that discarding those components makes the system consis-
+     software fault localization, debugging of spread-                      tent with the observation.
+     sheets, web services, and hardware designs, but                           In recent years, a number of constraint-based approaches
+     also the analysis of biological systems, among                         for MBD proposed the use SAT or MaxSAT [Smith et al.,
+     many others. Motivated by these different uses,                        2005; Bauer, 2005; Safarpour et al., 2007; Feldman et al.,
+     there have been significant improvements made to                       2010; Metodi et al., 2012; Nica et al., 2013; Metodi et al.,
+     MBD algorithms in recent years. Nevertheless, the                      2014], where minimal cardinality diagnoses are computed ei-
+     analysis of larger and more complex systems moti-                      ther with iterative SAT solving or with dedicated MaxSAT
+     vates further improvements to existing approaches.                     solvers. In addition, the importance of constraint-based MBD
+     This paper proposes a novel encoding of MBD into                       is demonstrated by applications in a number of different set-
+     maximum satisfiability (MaxSAT). The new encod-                        tings, which include software fault localization in C code
+     ing builds on recent work on using Propositional                       with MaxSAT [Jose and Majumdar, 2011], spreadsheet de-
+     Satisfiability (SAT) for MBD, but identifies a num-                    bugging with CP [Hofer et al., 2013], design debugging, both
+     ber of key optimizations that are very effective in                    with SAT [Smith et al., 2005] and MaxSAT [Safarpour et al.,
+     practice. The paper also proposes a new set of                         2007], among many others.
+     challenging MBD instances, which can be used for                          Recent work on compiling MBD to SAT showed clear per-
+     evaluating new MBD approaches. Experimental re-                        formance gains over earlier approaches [Metodi et al., 2012;
+     sults obtained on existing and on the new MBD                          2014]. This paper builds on this recent work and develops
+     problem instances, show conclusive performance                         a number of improvements to the compilation of MBD into
+     gains over the current state of the art.                               SAT, which produce further categorical performance gains
+                                                                            over what is arguably the currently best performing MBD ap-
+                                                                            proach [Metodi et al., 2014]. Since the paper exploits domi-
+1   Introduction                                                            nators (in line with recent work [Siddiqi and Huang, 2007;
+Model based diagnosis (MBD) is a well-known research                        Metodi et al., 2014]), the new MBD to SAT compilation
+topic in AI, with seminal work in the 80s [Reiter, 1987;                    approach is referred to as Dominator-Oriented Encoding
+de Kleer and Williams, 1987], and with a large body of work                 (DOE).
+over the years. A number of alternative approaches have                        The paper is organized as follows. Section 2 introduces the
+been proposed for MBD, including conflict-based [de Kleer                   definitions and notation used throughout. Section 3 develops
+et al., 1992; de Kleer, 2009], constraint-based [Williams and               the DOE approach for compiling MBD into SAT/MaxSAT.
+Ragno, 2007; Feldman et al., 2010; Metodi et al., 2012;                     Section 4 compares the DOE approach with SCryptoDiag-
+Nica and Wotawa, 2012; Metodi et al., 2014], compilation-                   noser [Metodi et al., 2014], a state-of-the-art MBD approach.
+based [Darwiche, 2001; Siddiqi and Huang, 2007], and the                    Section 5 concludes the paper.
+use of duality in conflict-based approaches [Stern et al.,
+2012]. Given a model of a system and an observation of the                  2   Preliminaries
+   ∗
+     This work is partially supported by SFI grant BEA-                     Well-known definitions from Propositional Satisfiability
+CON (09/IN.1/I2618), by FCT grant POLARIS (PTDC/EIA-                        (SAT) and Maximum Satisfiability (MaxSAT) [Biere et al.,
+CCO/123051/2010), and by national funds through FCT with ref-               2009] are assumed. Moreover, basic knowledge of recent
+erence UID/CEC/50021/2013.                                                  MaxSAT algorithms, i.e. MaxSAT algorithms based on the it-
+
+
+
+                                                                     1966
+erative identification of unsatisfiable subformulas (or cores),           1   global: hSD, Comps, Obsi
+is also assumed [Ansótegui et al., 2013; Morgado et al.,                 2   repeat
+2013]. In addition, standard definitions of circuits are as-              3      FindDominators()
+sumed [Biere et al., 2009], including controlling (resp. non-             4      FindBackboneComponents()
+controlling) input values of simple gates, concretely 0 (resp.            5      FindBlockedConnections()
+1) for AND/NAND and 1 (resp. 0) for OR/NOR).                              6      if MaxNumberIterations() then break
+   The paper assumes standard model-based diagnosis                       7   until NoMoreChanges()
+(MBD) definitions, following Reiter’s seminal work [Reiter,               8   GenMaxsatModel()
+1987] and used in most modern references [Reiter, 1987;
+Siddiqi, 2011; Metodi et al., 2012; Nica et al., 2013; Metodi                    Algorithm 1: MBD to MaxSAT compilation
+et al., 2012]. As in recent work, the weak fault model (WFM)
+is assumed throughout. A system description SD is a set of
+first-order sentences [Reiter, 1987]. The system components,                 Figure 1 summarizes the most often used SAT-based ap-
+Comps, are a set of constants, Comps = {c1 , . . . , cm }. Given          proach for MBD [Smith et al., 2005; Feldman et al., 2010;
+a system description SD, composed of a set of components                  Nica et al., 2013]. Recent work on SAT-based MBD [Metodi
+Comps, each component can be declared as healthy or un-                   et al., 2012; 2014] develops a more sophisticated model, by
+healthy. For each component c ∈ Comps, Ab(c) = 1 if c is                  using logical equivalence between the unhealthy variable of
+declared as unhealthy; otherwise Ab(c) = 0. Similarly to ear-             a component and its associated CNF encoding, and also by
+lier work [Feldman et al., 2010; Metodi et al., 2012], it is              exploiting structural properties of the system description, in-
+assumed that SD is represented as a CNF formula, namely:                  cluding graph dominators and sections.
+                            ^
+                   SD ,             (Ab(c) ∨ Fc )            (1)          3     Efficient MBD with MaxSAT
+                          c∈Comps                                         The novel approach for compiling MBD into MaxSAT is
+where Fc denotes the CNF encoding of component c.                         summarized in Algorithm 1. Lines 2 to 7 preprocess the
+  Observations are used to represent situations where the be-             system as described in the following sections. The objective
+havior of the system is not the expected one. An observation              is to generate a simpler MaxSAT instance than what would be
+Obs is defined as a finite set of first-order sentences [Reiter,          achieved with the basic MaxSAT encoding (described in Sec-
+1987]. As with the system description, it is assumed that the             tion 2). The main loop is executed while additional changes
+observation can be encoded into CNF, as a set of unit clauses,            are identified. Line 6 bounds the maximum number of itera-
+and denoted Obs.                                                          tions of the algorithm, so that the (quasi-quadratic) worst case
+                                                                          running time is not observed. Line 8 generates the MaxSAT
+Definition 1 (Diagnosis Problem) A system with descrip-                   formula, using the basic encoding described above, but also
+tion SD is faulty if its model is inconsistent with a given ob-           taking into account the information generated by the prepro-
+servation Obs when all components are declared healthy, i.e.:             cessing phase. The MBD to MaxSAT encoding proposed
+                 SD ∧ Obs ∧
+                                ^
+                                        ¬Ab(c)  ⊥           (2)          in this paper referred to as Dominator-Oriented Encoding
+                                                                          (DOE), given the way dominators are exploited in the com-
+                              c∈Comps
+                                                                          pilation process. The rest of this section details each prepro-
+The problem of diagnosis is to identify a set of components               cessing step.
+which, if declared unhealthy, make the system consistent with
+the observation. The problem of MBD is represented by the                 3.1    Dominators, TLDs & Hard Components
+3-tuple hSD, Comps, Obsi.                                                 A well-known technique to constrain the CNF encoding is to
+                                                                          consider the immediate dominators of the circuit graph [Sid-
+Definition 2 (Diagnosis) Given           an     MBD      problem
+                                                                          diqi and Huang, 2007; Metodi et al., 2012].
+hSD, Comps, Obsi, the set of components ∆ ⊆ Comps is
+                                                                             Let O denote a special vertex to which every circuit output
+a diagnosis if
+                                                                          is connected. Vertex v is a dominator of vertex u if all paths
+                                                                          from u to O include v [Lengauer and Tarjan, 1979]. Vertex
+                     ^                  ^
+       SD ∧ Obs ∧         Ab(c) ∧               ¬Ab(c) 2 ⊥   (3)
+                    c∈∆             c∈Comps\∆                             v is an immediate dominator of u if every other dominator of
+                                                                          u is also a dominator of v . A circuit gate is dominated if its
+A diagnosis ∆ is minimal if no proper subset ∆0 ( ∆ is a                  immediate dominator is not O; otherwise it is non-dominated.
+diagnosis, and ∆ is of minimal cardinality if there exists no                If a dominated gate is included in some minimal-
+other diagnosis ∆0 ⊆ Comps with |∆0 | < |∆|.                              cardinality diagnosis, then it can be replaced by its immediate
+   To model MBD with MaxSAT [Safarpour et al., 2007;                      (non-dominated) dominator gate [Siddiqi and Huang, 2007].
+Feldman et al., 2010], SD (see (1)) represents the hard                   Thus, one can analyze solely the minimal cardinality diag-
+clauses, whereas the soft clauses are unit clauses (¬Ab(c)),              noses that do not involve dominated gates. These are referred
+one for each component c ∈ Comps. This is referred to as                  to as top-level diagnoses (TLDs) [Siddiqi and Huang, 2007;
+the basic MaxSAT encoding in this paper. Different MaxSAT                 Metodi et al., 2012; 2014].
+solving approaches can then be applied. Alternatively, the                Definition 3 (Top-Level Diagnosis (TLD)) A minimal car-
+soft clauses can be replaced by a cardinality constraint and              dinality diagnosis is a top-level diagnosis if it does not con-
+solved iteratively with a SAT solver.                                     tain dominated gates.
+
+
+
+                                                                   1967
+  i1       z1                                         Obs     hi1 , i2 , i3 , i4 , i5 i   ho1 , o2 i               {z1 , z2 , z3 , z4 , o1 , o2 }
+                                    o1                                                                 Comps   ,
+                                                                                                                   V
+                                                       19       h1, 0, 0, 0, 1i            h1, 1i         SD   ,     c∈Comps (Ab(c) ∨ Fc )
+  i2                  z3                                                                                 Fz1   ,   CNF(z1 ↔ ¬(i1 ∧ i3 ))
+                                                       20       h0, 1, 1, 1, 1i            h1, 1i
+                                                                                                         Fz2   ,   CNF(z2 ↔ ¬(i3 ∧ i4 ))
+  i3                                                   51       h1, 0, 1, 1, 1i            h0, 1i        Fz3   ,   CNF(z3 ↔ ¬(i2 ∧ z2 ))
+  i4       z2                                          53       h1, 1, 1, 0, 1i            h0, 0i        Fz4   ,   CNF(z4 ↔ ¬(z2 ∧ i5 ))
+                                                       63       h1, 0, 1, 0, 1i            h0, 0i        Fo1   ,   CNF(o1 ↔ ¬(z1 ∧ z3 ))
+                      z4            o2                                                                   Fo2   ,   CNF(o2 ↔ ¬(z3 ∧ z4 ))
+  i5
+                                                            (b) Selected observations                      (c) MBD formulation
+                  (a) C17 circuit
+
+                            Figure 1: C17 circuit and selected observations from ISCAS85 scenarios
+
+   Recent work [Siddiqi and Huang, 2007; Siddiqi, 2011;                  backbone literals [Janota et al., 2015], in the DOE approach
+Metodi et al., 2012; 2014] focuses on computing TLDs. The                for MBD, backbone nodes are identified by value propaga-
+other minimal cardinality diagnoses can be enumerated by                 tion through dominated components. In addition, the fact that
+iteratively replacing a non-dominated gate by a dominated                dominated components can be declared backbone nodes al-
+gate, and then checking for consistency. This is in practice             lows the identification of connections that cannot be used for
+simpler than solving MaxSAT, since one call to a SAT solver              computing TLDs.
+on a simpler formula suffices. This approach is also assumed             Definition 5 (Blocked Edge (B-Edge)) A fanin edge e of a
+in this paper.                                                           component g is blocked if the output value of g remains un-
+   In the DOE MaxSAT problem formulation, immediate                      changed for any value assigned to the fanin edge e.
+dominators are computed with a standard (quasi-)linear time
+algorithm [Lengauer and Tarjan, 1979]. In terms of the prob-             Proposition 2 For any computed TLD, if a fanin node of a
+lem encoding, since dominated gates are not included in                  component g is a B-Node and it is assigned the controlling
+TLDs, these can be encoded as hard clauses, and referred to              value of g , then the other unassigned fanin edges of g are
+as hard components. Thus, unhealthy variables Ab(c) are only             B-Edges.
+associated with non-dominated components, each of which is               Example 2 For the example in Figure 1, z1 is dominated. If
+associated with a soft clause.                                           i1 = i3 = 1, then z1 = 0. In this case, edge (z3 , o1 ) is a B-
+Proposition 1 For any computed TLDs, dominated gates are                 edge. This information can lead to further simplifications, as
+declared healthy.                                                        illustrated below.
+Remark 1 For computing TLDs (and minimal cardinality di-                 3.3         Filtered Nodes and Edges
+agnoses), dominated gates are modeled as hard clauses.
+                                                                         Blocked edges can now be used for determining nodes and
+Remark 1 serves to simplify the MaxSAT problem instance,                 edges which need not be added to the generated CNF formula.
+by reducing the number of soft clauses, since hard compo-
+nents cannot be declared unhealthy when computing TLDs.                  Definition 6 (Filtered Edge) An edge is filtered if it is
+                                                                         blocked or if its fanout node is filtered.
+3.2    Backbone Nodes & Blocked Edges                                    Definition 7 (Filtered Node) A node is filtered if all of its
+In practice, Remark 1 results in significant reduction in the            fanout edges are filtered.
+number of used unhealthy variables if the number of domi-
+                                                                         Remark 2 As the result of the preprocessing step of DOE
+nated components is also significant1 . More importantly, if
+                                                                         compilation, filtered edges and nodes are not encoded into
+the output value of a dominated component can be deter-
+                                                                         CNF.
+mined given its input values then, because the component
+cannot be declared unhealthy, the output value of the com-                   Let F denote the basic CNF encoding of the system (de-
+ponent can be encoded as a hard unit clause.                             scribed in Section 2), consisting of CNF encoding the system
+                                                                         and associated observation, respectively SD and Obs. More-
+Definition 4 (Backbone Node (B-Node)) A           dominated
+                                                                         over, let F f denote the CNF encoding of the system where
+component for which the output value is fixed for any TLD is
+                                                                         filtered nodes are not encoded into CNF, respectively SDf and
+a backbone node (B-Node).
+                                                                         Obsf . Finally, let ∆ be a computed minimal cardinality diag-
+Example 1 For the example in Figure 1, z1 is always dom-                 nosis using F .
+inated. Thus, if i1 = i3 = 1, then z1 = 0 for any TLD. In
+contrast, if i1 = 0 (or i3 = 0), then z1 = 1 for any TLD.                Proposition 3 ∆ is a TLD for SD given Obs iff ∆ is a TLD
+                                                                         for SDf given Obsf .
+The definition of backbone node mimics that of backbone lit-
+eral [Monasson et al., 1999; Slaney and Walsh, 2001]. Al-                   Another important consequence of identifying filtered
+though there are recent practical algorithms for computing               edges and nodes is that this enables detecting additional dom-
+                                                                         inated components, which can lead to finding additional B-
+   1                                                                     Nodes, B-Edges, and so additional filtered nodes and edges.
+     Observe that components represent circuit gates. Moreover,
+each component can be viewed as a node in a directed graph.              As shown in Algorithm 1, this process is repeated while
+
+
+
+                                                                  1968
+       Obs     Dominated                B-Nodes                          B-Edges                            Soft                       CSs                   |X|     |H|   |S|
+       19     {z1 , z4 , z2 }               {z1 }                       {(z2 , z3 )}                  {o1 , o2 , z3 }         {hz3 , z4 , o1 , o2 i}          13     22    3
+       20       {z1 , z4 }                  {z1 }                             ∅                      {o1 , o2 , z2 , z3 }    {hz2 , z3 , z4 , o1 , o2 i}      14     22    4
+       51    {z1 , z4 , z2 , z3 }   {z̄1 , z̄2 , z3 , z4 }       {(z2 , z3 ), (z3 , o1 )}               {o1 , o2 }                {ho1 i, ho2 i}               7     11    2
+       53     {z1 , z4 , z3 }               {z̄1 }                      {(z3 , o1 )}                  {o1 , o2 , z2 }       {ho1 i, ho2 , z2 , z3 , z4 i}     13     22    3
+       63    {z1 , z4 , z2 , z3 }   {z̄1 , z2 , z3 , z̄4 }   {(z2 , z3 ), (z3 , o1 ), (z3 , o2 )}       {o1 , o2 }                {ho1 i, ho2 i}               7     11    2
+                                                                                                                                Basic encoding                17     25    6
+
+                                          Table 1: DOE for C17 example observations vs. basic encoding
+
+changes are observed. The immediate downside of this ap-                                       (see Section 4) demonstrate that core-guided MaxSAT algo-
+proach is that this results in a (quasi-)quadratic worst-case                                  rithms introduce significant performance gains over MaxSAT
+running time (due to computing dominators in quasi-linear                                      approaches based on iterative SAT solving [Metodi et al.,
+time [Lengauer and Tarjan, 1979]). Observe that in the worst                                   2014].
+case: (i) the complexity of iteration of the loop is quasi-linear,
+due to the algorithm for finding dominators used [Lengauer                                     3.6       Compilation Examples
+and Tarjan, 1979]; and (ii) in each iteration most components                                  Table 1 summarizes the compilation with DOE for C17 us-
+in the system need to be analyzed. As a result, the proposed                                   ing the selected observations from Figure 1. Columns |X|,
+solution in Algorithm 1 is to bound the number of iterations                                   |H| and |S| denote, respectively, the number of variables, the
+by a constant.                                                                                 number of hard clauses, and the number of soft clauses. As
+                                                                                               can be observed, for some observations the reductions are sig-
+Example 3 For the case of Example 2, the fact that (z3 , o1 )                                  nificant, in the total number of soft clauses, total number of
+is a B-edge, and so it is filtered, results in z3 being declared                               clauses and total number of variables.
+dominated and so it is declared a hard component. Moreover,                                       The compilation process is illustrated for observation 51
+if i2 = 0, then (z2 , z3 ) becomes a B-edge. As a result, z2 is                                (see Figure 1). In this case, z1 and z4 are initially dominated
+now dominated, and so it is declared a hard component. Ob-                                     (other components may be declared dominated as preprocess-
+serve that given the assignments to i1 , i2 , i3 , and regardless                              ing phase progresses). Thus, both z1 and z4 are hard compo-
+of the assignments made to i4 , i5 , the compilation is able to                                nents (and so encoded with hard clauses). Moreover, since
+declare z1 , z2 , z3 , z4 as hard components. This leaves only o1                              its inputs are fixed and z1 cannot be declared unhealthy, z1
+and o2 as the components that can be declared unhealthy for                                    is a B-node, and assigned value 0. Observe that, although z4
+computing TLDs, given this concrete observation pattern.                                       is a hard component, it cannot be declared a B-node at this
+                                                                                               stage; the value of z4 cannot be decided since i5 = 1 and z2
+3.4   Induced Problem Decomposition                                                            may take any value. Given the value assigned to z1 , (z3 , o1 )
+When computing TLDs, the identification of dominators,                                         becomes a B-edge. As a result, z3 is now dominated, and so
+backbone nodes and blocked edges contribute to creating                                        a hard component. Given the value of i2 , z3 also becomes a
+structural decompositions. Structural decompositions have                                      B-node, with value 1. Moreover, (z2 , z3 ) can now be declared
+been considered in MBD [Darwiche, 1998] but also in other                                      a B-edge. The immediate consequence is that z2 becomes
+domains [Bayardo Jr. and Pehoushek, 2000]. Depending on                                        dominated (and so a hard component), and is also declared
+the observation, the DOE proposed in this paper can yield                                      a B-node, with value 0. The value of z2 also implies that
+problem decompositions in the form of sets of connected                                        the value of z4 is 1. Given the above, z1 , z2 , z3 , z4 are hard
+components, which can be identified in linear time [Bayardo                                    components, each of which is declared a B-node. In addition,
+Jr. and Pehoushek, 2000]. If two connected components                                          the only unassigned variables are o1 and o2 , each of which
+have (disjoint) unsatisfiable cores, these will represent dis-                                 is associated with a soft unit clause. As can be observed, the
+joint unsatisfiable cores, which can be exploited by some re-                                  compilation process also induces a decomposition of the orig-
+cent core-guided MaxSAT algorithms [Ansótegui et al., 2013;                                   inal problem, such that each unassigned variable is located in
+Morgado et al., 2013].                                                                         a separate connected subgraph. As observed earlier, modern
+                                                                                               core-guided MaxSAT solvers can exploit decomposition into
+3.5   Core-Guided MaxSAT Solving                                                               connected subgraphs.
+As described above, the soft clauses of the MaxSAT formula-                                    4      Experimental Results
+tion are unit and the complement of the unhealthy variable of
+each non-dominated component. Moreover, for many MBD                                           This         section         compares            the         latest    version    of
+problems, many of the components are not included in any                                       SATbD/SCryptoDiagnoser (scrypto) [Metodi et al., 2012;
+minimal cardinality diagnosis, i.e. the value of Ab(c) is al-                                  2014], recently shown to outperform most, if not all, of
+ways 0. Core-guided MaxSAT algorithms can exploit this                                         earlier MBD approaches2 , against the DOE MaxSAT model
+fact. Since these algorithms iteratively call a SAT solver us-                                     2
+                                                                                                     Recent results [Nica et al., 2013] suggest that alternatives ap-
+ing both the hard and the soft clauses, many of these irrelevant                               proaches could be moderately more efficient. However, the scenar-
+unhealthy variables will always be assigned value 0 and will                                   ios considered involve a small number of errors (1 to 3), and scrypto
+not be included in computed cores. The experimental results                                    is expected to excel for larger numbers of errors.
+
+
+
+
+                                                                                        1969
+  Figure 2: Scatter plot eva vs. scrypto for ISCAS85 suite                       Figure 3: Scatter plot wboinc vs. scrypto for ISCAS85 suite
+
+          16174 instances      scrypto      eva     wboinc                                    5903 instances      scrypto      eva    wboinc
+              % Solved          100.0      100.0     100.0                                       % Solved          62.4        89.7    90.6
+          % scrypto wins          —        23.4        0.1                                    % scrypto wins        —           2.2     0.4
+           % eva wins            76.0       —          0.0                                     % eva wins          97.8         —      13.4
+          % wboinc wins          99.9      100.0       —                                      % wboinc wins        99.6        86.6     —
+
+             Table 2: Statistics for ISCAS85 suite                                                Table 3: Statistics for ITC99 suite
+                                                                                 are now easy to solve. As a result, this paper starts by show-
+proposed in this paper. For the generated MaxSAT formulas,                       ing results for the ISCAS85 problem instances, confirming
+some of the best performing MaxSAT solvers on partial                            that these are indeed easy, and then considers a new suite of
+MaxSAT instances were selected3 . Concretely, the MaxSAT                         far more challenging problem instances.
+solvers considered were eva500a (eva) [Narodytska and
+Bacchus, 2014] and open-wbo-inc (wboinc) [Martins et                             4.1      ISCAS85 Suite
+al., 2014]. Both solvers are core-guided and so are better                       The experimental results for the ISCAS85 suite are summa-
+suited to exploit the encoding proposed in this paper (see                       rized in Figures 2 and 3, and in Table 2. As can be observed,
+Section 3.5). Because the iterative SAT solving approach                         modulo a small number of outliers, the MaxSAT model pro-
+used by scrypto can be considered to be solving MaxSAT,                          posed in this paper enables observable performance gains
+and it is not based on a portfolio of MaxSAT solvers, we                         over scrypto. For example, wboinc outperforms scrypto in
+opted not to use a portfolio MaxSAT solver [Ansótegui et al.,                   99.9% of the instances, with performance gains that most of-
+2014].                                                                           ten range between 1 and 3 orders of magnitude. Among the
+   The experiments were performed on a cluster of Linux                          two MaxSAT solvers, wboinc shows better performance than
+servers, each with two Intel Xeon 2.60GHz processors and                         eva, in every of the 16174 instances. As can be observed,
+64 GByte of physical memory. For all experiments, the time                       both scrypto, eva and wboinc are able to solve every problem
+limit was set to 600s and the memory limit to 4GByte. The                        instance within the time limit of 600s. Among the instances
+experiments focus on the run time for computing one mini-                        for which scrypto outperforms the MaxSAT approaches, there
+mal cardinality diagnosis for each scenario. As a result, the                    is one scenario for which both eva and wboinc take more
+preprocessing time of scrypto is not accounted for. Similarly,                   than 300s. For this instance, the DOE proposed in this pa-
+to guarantee that the MaxSAT encoding time is negligible, the                    per is not as effective as the encoding used by scrypto. It
+number of iterations of Algorithm 1 is limited to 2.                             should be noted that the SAT solvers used by scrypto (Cryp-
+   Most recent papers on approaches for MBD have focused                         toMiniSat [Soos et al., 2009]), and by eva and wboinc (Glu-
+on the ISCAS85 [Brglez and Fujiwara, 1985] problem in-                           cose [Audemard and Simon, 2009] for both), although differ-
+stances [Williams and Ragno, 2007; Siddiqi and Huang,                            ent, are based on the MiniSAT SAT solver4 and represent the
+2007; de Kleer, 2009; Feldman et al., 2010; Siddiqi, 2011;                       current state-of-the-art.
+Metodi et al., 2012; Stern et al., 2012; Nica et al., 2013;
+Metodi et al., 2014]. Given the improvements made to MBD                         4.2      ITC99 Suite
+approaches in recent years, most of these problem instances                      The results in the previous section demonstrate that any of the
+                                                                                 ISCAS85 circuits with any existing scenario can be solved
+    3
+      The solvers are selected given the results of the 2014 MaxSAT              very efficiently by state-of-the-art MBD approaches. This
+evaluation, http://maxsat.ia.udl.cat, concretely on the industrial cat-          section proposes the use of the more challenging ITC99
+egories. The two best performing, publicly available, MaxSAT
+                                                                                    4
+solvers were selected.                                                                  https://github.com/niklasso/minisat.
+
+
+
+
+                                                                          1970
+             Figure 4: Cactus plot for ITC99 suite                                 Figure 6: Scatter plot wboinc vs. scrypto for ITC99 suite
+
+
+                                                                               62.4% of the problem instances within the time limit. The
+                                                                               DOE proposed in this paper enables MaxSAT solvers to per-
+                                                                               form significantly better than scrypto, with eva and wboinc
+                                                                               being able to solve, respectively 89.7% and 90.6% of the
+                                                                               instances. More importantly, the MaxSAT solvers are most
+                                                                               often able to outperform scrypto with gains than range be-
+                                                                               tween 1 and more than 3 orders of magnitude. As before,
+                                                                               wboinc outperforms eva for most instances, and consistently
+                                                                               outperforms scrypto. In contrast, scrypto outperforms wboinc
+                                                                               for only 0.4% of the instances (among those solved by the
+                                                                               two solvers). The results also suggest that a portfolio of ap-
+                                                                               proaches is unlikely to outperform the DOE into MaxSAT.
+
+
+                                                                               5     Conclusions
+    Figure 5: Scatter plot eva vs. scrypto for ITC99 suite
+                                                                               This paper proposes a novel approach for compiling MBD
+                                                                               into MaxSAT. This novel approach addresses the computa-
+benchmark suite [Corno et al., 2000]5 . Scenarios for the                      tion of TLDs, and emphasizes techniques for effectively con-
+ITC99 benchmark suite were generated using a standard ap-                      straining the resulting MaxSAT formulation. By building on
+proach [Siddiqi, 2011], with the number of errors in the cir-                  dominators, the proposed encoding introduces several new
+cuit’s outputs ranging from 1 to 50. A total of 7903 scenarios                 concepts, including hard and backbone nodes, blocked edges,
+were generated. However, scrypto is unable to preprocess two                   and filtered nodes and edges. Experimental results obtained
+of the ITC99 circuits, b18 and b19, for which 2000 scenarios                   on standard MBD scenarios show gains that most often ex-
+were generated. As a result, the experiments report only re-                   ceed one order of magnitude over SATbD/SCryptoDiagnoser,
+sults for 5903 scenarios, although each of the MaxSAT for-                     one of the best performing MBD approaches [Metodi et
+mulas for the scenarios of both b18 and b19 can be solved in a                 al., 2012; 2014]. Given that these standard scenarios turn
+matter of seconds by both MaxSAT solvers, eva and wboinc.                      out to be fairly simple for the new DOE approach, the pa-
+Observe that the preprocessing time of scrypto for these cir-                  per also develops a new MBD suite using more challeng-
+cuits is far from negligible (ranging between a few tens and                   ing circuits [Corno et al., 2000]. The experimental re-
+more than 100 seconds). This is far larger than the DOE com-                   sults on the new MBD suite show conclusive gains over
+pilation time. As a result, both times are not accounted for.                  SATbD/SCryptoDiagnoser. These results are even more sig-
+   The experimental results for the ITC99 suite are summa-                     nificant, since both SATbD/SCryptoDiagnoser and the two
+rized in Figures 4, 5, and 6, and in Table 3. The results con-                 core-guided MaxSAT solvers are SAT-based, and use state-
+firm that the new scenarios are far more challenging for exist-                of-the-art SAT solvers. Also, SATbD/SCryptoDiagnoser
+ing MBD approaches, with scrypto being able to solve only                      uses BEE, a state-of-the-art finite domain constraint com-
+                                                                               piler [Metodi and Codish, 2012].
+    5
+      http://www.cad.polito.it/tools/itc99.html. All large ITC99 cir-             Future work will explore further optimizations for the DOE
+cuits were considered, namely b14, b15, b17, b18, b19, b20, b21                into MaxSAT compilation approach. One line of research will
+and b22. Each memory element was replaced by an input/output                   be to integrate restricted versions of the optimizations pro-
+pair, as is standard for example in testing.                                   posed in SATbD/SCryptoDiagnoser.
+
+
+
+                                                                        1971
+References                                                                     [Metodi and Codish, 2012] Amit Metodi and Michael Codish.
+[Ansótegui et al., 2013] Carlos Ansótegui, Maria Luisa Bonet, and               Compiling finite domain constraints to SAT with BEE. TPLP,
+   Jordi Levy. SAT-based MaxSAT algorithms. Artif. Intell.,                       12(4-5):465–483, 2012.
+   196:77–105, 2013.                                                           [Metodi et al., 2012] Amit Metodi, Roni Stern, Meir Kalech, and
+[Ansótegui et al., 2014] Carlos Ansótegui, Yuri Malitsky, and                   Michael Codish. Compiling model-based diagnosis to Boolean
+   Meinolf Sellmann. Maxsat by improved instance-specific algo-                   satisfaction. In AAAI, 2012.
+   rithm configuration. In AAAI, pages 2594–2600, 2014.                        [Metodi et al., 2014] Amit Metodi, R. Stern, Meir Kalech, and
+[Audemard and Simon, 2009] Gilles Audemard and Laurent Si-                        Michael Codish. A novel sat-based approach to model based
+   mon. Predicting learnt clauses quality in modern SAT solvers.                  diagnosis. J. Artif. Intell. Res. (JAIR), 51:377–411, 2014.
+   In IJCAI, pages 399–404, 2009.                                              [Monasson et al., 1999] Rémi Monasson, Riccardo Zecchina,
+[Bauer, 2005] Andreas Bauer. Simplifying diagnosis using LSAT:                    Scott Kirkpatrick, Bart Selman, and Lidror Troyansk. Determin-
+   A propositional approach to reasoning from first principles. In                ing computational complexity from characteristic ’phase transi-
+   CPAIOR, pages 49–63, 2005.                                                     tions’. Nature, 400:133–137, July 1999.
+[Bayardo Jr. and Pehoushek, 2000] Roberto J. Bayardo Jr. and                   [Morgado et al., 2013] António Morgado, Federico Heras,
+   Joseph Daniel Pehoushek. Counting models using connected                       Mark H. Liffiton, Jordi Planes, and Joao Marques-Silva.
+   components. In AAAI/IAAI, pages 157–162, 2000.                                 Iterative and core-guided MaxSAT solving: A survey and
+[Biere et al., 2009] Armin Biere, Marijn Heule, Hans van Maaren,                  assessment. Constraints, 18(4):478–534, 2013.
+   and Toby Walsh, editors. Handbook of Satisfiability. IOS Press,             [Narodytska and Bacchus, 2014] Nina Narodytska and Fahiem
+   2009.                                                                          Bacchus. Maximum satisfiability using core-guided maxsat res-
+[Brglez and Fujiwara, 1985] F. Brglez and H. Fujiwara. A neutral                  olution. In AAAI, pages 2717–2723, 2014.
+   list of 10 combinational benchmark circuits and a target transla-           [Nica and Wotawa, 2012] Iulia Nica and Franz Wotawa. ConDiag
+   tor in FORTRAN. In ISCAS, pages 695–698, Jun. 1985.                            - computing minimal diagnoses using a constraint solver. In DX,
+[Corno et al., 2000] Fulvio Corno, Matteo Sonza Reorda, and Gio-                  pages 185–192, 2012.
+   vanni Squillero. RT-level ITC’99 benchmarks and first ATPG                  [Nica et al., 2013] Iulia Nica, Ingo Pill, Thomas Quaritsch, and
+   results. IEEE Design & Test of Computers, 17(3):44–53, 2000.                   Franz Wotawa. The route to success - a performance compar-
+[Darwiche, 1998] Adnan Darwiche. Model-based diagnosis us-                        ison of diagnosis algorithms. In IJCAI, 2013.
+   ing structured system descriptions. J. Artif. Intell. Res. (JAIR),          [Reiter, 1987] Raymond Reiter. A theory of diagnosis from first
+   8:165–222, 1998.                                                               principles. Artif. Intell., 32(1):57–95, 1987.
+[Darwiche, 2001] Adnan Darwiche. Decomposable negation nor-                    [Safarpour et al., 2007] Sean Safarpour, Hratch Mangassarian,
+   mal form. J. ACM, 48(4):608–647, 2001.                                         Andreas G. Veneris, Mark H. Liffiton, and Karem A. Sakallah.
+[de Kleer and Williams, 1987] Johan de Kleer and Brian C.                         Improved design debugging using maximum satisfiability. In
+   Williams. Diagnosing multiple faults. Artif. Intell., 32(1):97–                FMCAD, pages 13–19, 2007.
+   130, 1987.                                                                  [Siddiqi and Huang, 2007] Sajjad Ahmed Siddiqi and Jinbo
+[de Kleer et al., 1992] Johan de Kleer, Alan K. Mackworth, and                    Huang. Hierarchical diagnosis of multiple faults. In IJCAI,
+   Raymond Reiter. Characterizing diagnoses and systems. Artif.                   pages 581–586, 2007.
+   Intell., 56(2-3):197–222, 1992.                                             [Siddiqi, 2011] Sajjad Ahmed Siddiqi. Computing minimum-
+[de Kleer, 2009] Johan de Kleer. Minimum cardinality candidate                    cardinality diagnoses by model relaxation. In IJCAI, pages
+   generation. In DX, pages 397–402, 2009.                                        1087–1092, 2011.
+[Feldman et al., 2010] A. Feldman, G. Provan, J. de Kleer,                     [Slaney and Walsh, 2001] John K. Slaney and Toby Walsh. Back-
+   S. Robert, and A. van Gemund. Solving model-based diagnosis                    bones in optimization and approximation. In IJCAI, pages 254–
+   problems with Max-SAT solvers and vice versa. In DX, pages                     259, 2001.
+   185–192, 2010.                                                              [Smith et al., 2005] Alexander Smith, Andreas G. Veneris,
+[Hofer et al., 2013] Birgit Hofer, André Riboira, Franz Wotawa,                  Moayad Fahim Ali, and Anastasios Viglas. Fault diagnosis and
+   Rui Abreu, and Elisabeth Getzner. On the empirical evaluation                  logic debugging using Boolean satisfiability. IEEE Trans. on
+   of fault localization techniques for spreadsheets. In FASE, pages              CAD of Integrated Circuits and Systems, 24(10):1606–1621,
+   68–82, 2013.                                                                   2005.
+[Janota et al., 2015] Mikolás Janota, Inês Lynce, and Joao                   [Soos et al., 2009] Mate Soos, Karsten Nohl, and Claude Castel-
+   Marques-Silva. Algorithms for computing backbones of propo-                    luccia. Extending SAT solvers to cryptographic problems. In
+   sitional formulae. AI Commun., 28(2):161–177, 2015.                            SAT, pages 244–257, 2009.
+[Jose and Majumdar, 2011] Manu Jose and Rupak Majumdar.                        [Stern et al., 2012] Roni Tzvi Stern, Meir Kalech, Alexander Feld-
+   Cause clue clauses: error localization using maximum satisfi-                  man, and Gregory M. Provan. Exploring the duality in conflict-
+   ability. In PLDI, pages 437–446, 2011.                                         directed model-based diagnosis. In AAAI, 2012.
+[Lengauer and Tarjan, 1979] Thomas Lengauer and Robert Endre                   [Williams and Ragno, 2007] Brian C. Williams and Robert J.
+   Tarjan. A fast algorithm for finding dominators in a flowgraph.                Ragno. Conflict-directed A∗ and its role in model-based em-
+   ACM Trans. Program. Lang. Syst., 1(1):121–141, 1979.                           bedded systems. Discrete Applied Mathematics, 155(12):1562–
+[Martins et al., 2014] Ruben Martins, Saurabh Joshi, Vasco M.                     1595, 2007.
+   Manquinho, and Inês Lynce. Incremental cardinality constraints
+   for MaxSAT. In CP, pages 531–548, 2014.
+
+
+
+
+                                                                        1972
+

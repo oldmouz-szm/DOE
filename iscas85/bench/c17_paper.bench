@@ -1,0 +1,17 @@
+# C17 from paper Figure 1(a)
+# 5 inputs, 2 outputs, 6 NAND gates
+INPUT(1)
+INPUT(2)
+INPUT(3)
+INPUT(4)
+INPUT(5)
+
+OUTPUT(11)
+OUTPUT(12)
+
+6 = NAND(1, 3)
+7 = NAND(3, 4)
+8 = NAND(2, 7)
+9 = NAND(7, 5)
+11 = NAND(6, 8)
+12 = NAND(8, 9)
