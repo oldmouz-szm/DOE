@@ -9,7 +9,7 @@ This project implements the Dominator-Oriented Encoding (DOE) described in:
 - ISCAS `.bench` parser.
 - Observation/scenario parser and generator.
 - DOE preprocessing loop (bounded by `--max-iters`, default `2`):
-  - dominators,
+  - dominators (Lengauer-Tarjan algorithm),
   - dominated gates as hard components,
   - backbone-node propagation on dominated components,
   - blocked-edge detection,
@@ -17,6 +17,7 @@ This project implements the Dominator-Oriented Encoding (DOE) described in:
 - MaxSAT encoding (WCNF):
   - hard clauses from SD and observation,
   - soft unit clauses `¬Ab(c)` for non-dominated components.
+- Diagnosis enumeration with blocking clauses and cardinality constraints.
 - Solver runner for external MaxSAT solvers (e.g., `open-wbo-inc`, `eva500a`).
 
 ## Build
@@ -26,9 +27,13 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-Binary:
+Or without cmake:
 
-- `build/doe_maxsat`
+```bash
+g++ -std=c++17 -O3 -DNDEBUG -Wall -Wextra -Wpedantic src/doe_maxsat.cpp -o build/doe_maxsat
+```
+
+Binary: `build/doe_maxsat`
 
 ## Observation format
 
@@ -37,6 +42,18 @@ SCENARIO s0
 IN 1=1 2=0 3=1 6=1 7=1
 OUT 22=0 23=1
 END
+```
+
+Or simplified format:
+
+```text
+# inputs
+1=0
+2=0
+3=1
+# outputs
+22=0
+23=0
 ```
 
 ## Commands
@@ -63,7 +80,7 @@ build/doe_maxsat encode \
   --max-iters 2
 ```
 
-Run solver directly:
+Run solver (single diagnosis):
 
 ```bash
 build/doe_maxsat run \
@@ -72,6 +89,17 @@ build/doe_maxsat run \
   --solver "/path/to/open-wbo-inc" \
   --out results_c17.csv \
   --max-iters 2
+```
+
+Enumerate all minimum-cost diagnoses:
+
+```bash
+build/doe_maxsat run \
+  --bench iscas85/bench/c6288.bench \
+  --obs obs/c6288_obs_1.txt \
+  --solver "python3 tools/solve_with_rc2.py" \
+  --enum-all \
+  --max-iters 10
 ```
 
 Use RC2 (PySAT) as backend solver:
@@ -89,9 +117,7 @@ build/doe_maxsat run \
 
 ## Paper-like run configuration
 
-Script:
-
-- `scripts/reproduce_iscas85.sh`
+Script: `scripts/reproduce_iscas85.sh`
 
 It enforces:
 

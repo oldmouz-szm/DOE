@@ -432,6 +432,14 @@ std::vector<Observation> ParseObservations(const std::string &path, const Circui
         throw std::runtime_error("Cannot open observation file: " + path);
     }
 
+    std::string base_id;
+    {
+        std::string fname = fs::path(path).filename().string();
+        auto dot = fname.rfind('.');
+        if (dot != std::string::npos) fname = fname.substr(0, dot);
+        base_id = fname;
+    }
+
     std::vector<Observation> obs;
     std::optional<Observation> cur;
 
@@ -448,14 +456,14 @@ std::vector<Observation> ParseObservations(const std::string &path, const Circui
         std::string lower_raw = ToLower(raw_line);
         if (StartsWith(lower_raw, "# inputs") || StartsWith(lower_raw, "inputs:")) {
             if (!cur.has_value()) {
-                cur = MakeObservation("scenario_" + std::to_string(obs.size()));
+                cur = MakeObservation(base_id);
             }
             section = Section::INPUTS;
             continue;
         }
         if (StartsWith(lower_raw, "# outputs") || StartsWith(lower_raw, "outputs:")) {
             if (!cur.has_value()) {
-                cur = MakeObservation("scenario_" + std::to_string(obs.size()));
+                cur = MakeObservation(base_id);
             }
             section = Section::OUTPUTS;
             continue;
@@ -478,14 +486,14 @@ std::vector<Observation> ParseObservations(const std::string &path, const Circui
             std::string kw;
             std::string id;
             ss >> kw >> id;
-            if (id.empty()) id = "scenario_" + std::to_string(obs.size());
+            if (id.empty()) id = base_id + "_" + std::to_string(obs.size());
             cur = MakeObservation(id);
             section = Section::NONE;
             continue;
         }
 
         if (!cur.has_value()) {
-            cur = MakeObservation("scenario_" + std::to_string(obs.size()));
+            cur = MakeObservation(base_id);
         }
 
         if (StartsWith(line, "IN ") || StartsWith(line, "INPUT ")) {
@@ -723,7 +731,7 @@ struct LTState {
         parent.assign(n, -1);
         ancestor.assign(n, -1);
         child.assign(n, -1);
-        vertex.assign(n, -1);
+        vertex.assign(n + 1, -1);
         label.assign(n, -1);
         semi.assign(n, -1);
         dom.assign(n, -1);
@@ -1331,6 +1339,7 @@ struct SolveResult {
     int cost = -1;
     double seconds = 0.0;
     std::vector<int> model;
+    int num_diagnoses = 1;
 };
 
 SolveResult RunSolver(const std::string &solver_cmd, const std::string &wcnf_path) {
@@ -1342,11 +1351,16 @@ SolveResult RunSolver(const std::string &solver_cmd, const std::string &wcnf_pat
         throw std::runtime_error("Failed to run solver command: " + cmd);
     }
 
-    char buffer[1024];
+    char buffer[65536];
     std::string output;
+    std::string line_accum;
     while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output += buffer;
+        line_accum += buffer;
+        if (line_accum.back() != '\n') continue;
+        output += line_accum;
+        line_accum.clear();
     }
+    if (!line_accum.empty()) output += line_accum;
     int rc = pclose(pipe);
     auto t1 = std::chrono::steady_clock::now();
 
@@ -1376,12 +1390,20 @@ SolveResult RunSolver(const std::string &solver_cmd, const std::string &wcnf_pat
             r.solved = true;
         }
         if (line.rfind("v ", 0) == 0) {
+            std::vector<int> model;
             std::stringstream ls(line.substr(2));
             int lit = 0;
             while (ls >> lit) {
                 if (lit == 0) break;
-                r.model.push_back(lit);
+                model.push_back(lit);
             }
+            if (r.model.empty()) {
+                r.model = model;
+            }
+        }
+        if (line.rfind("c num_diagnoses ", 0) == 0) {
+            std::stringstream ls(line.substr(16));
+            ls >> r.num_diagnoses;
         }
     }
 
@@ -1511,6 +1533,12 @@ int main(int argc, char **argv) {
                 for (bool x : st.filtered_node) if (x) filtered_nodes++;
                 meta << obs[i].id << "," << cnf.hard.size() << "," << cnf.soft.size() << "," << cnf.max_var
                      << "," << filtered_nodes << "," << st.blocked_edges.size() << "\n";
+
+                std::ofstream mapf(fs::path(outdir) / (fn.str() + ".map"));
+                mapf << "ab_var,component\n";
+                for (const auto &kv : enc.ab_var_to_component) {
+                    mapf << kv.first << "," << kv.second << "\n";
+                }
             }
 
             std::cout << "Encoded " << obs.size() << " scenarios into " << outdir << "\n";
@@ -1525,6 +1553,8 @@ int main(int argc, char **argv) {
             int max_iters = GetArgInt(args, "max-iters", 2);
             bool legacy_outputs_as_known = GetArgInt(args, "legacy-outputs-as-known", 0) != 0;
             bool print_table = GetArgInt(args, "print-table", 1) != 0;
+            bool enum_all = GetArgInt(args, "enum-all", 0) != 0;
+            int enum_limit = GetArgInt(args, "enum-limit", 0);
 
             if (bench.empty() || obs_path.empty() || solver.empty()) {
                 throw std::runtime_error("run requires --bench --obs --solver");
@@ -1566,38 +1596,181 @@ int main(int argc, char **argv) {
                 fs::path wcnf = tmp_dir / ("scenario_" + std::to_string(i) + ".wcnf");
                 WriteWCNF(cnf, wcnf.string());
 
-                SolveResult sr = RunSolver(solver, wcnf.string());
-
-                std::unordered_set<int> model_set(sr.model.begin(), sr.model.end());
-                std::vector<std::string> faulty;
-                faulty.reserve(enc.ab_var_to_component.size());
-                for (const auto &kv : enc.ab_var_to_component) {
-                    int ab_var = kv.first;
-                    if (model_set.count(ab_var)) {
-                        faulty.push_back(kv.second);
+                auto ExtractDiag = [&](const std::vector<int> &model) -> std::vector<std::string> {
+                    std::unordered_set<int> model_set(model.begin(), model.end());
+                    std::vector<std::string> faulty;
+                    for (const auto &kv : enc.ab_var_to_component) {
+                        if (model_set.count(kv.first)) {
+                            faulty.push_back(kv.second);
+                        }
                     }
-                }
-                std::sort(faulty.begin(), faulty.end());
-                std::string faulty_str = Join(faulty, "|");
+                    std::sort(faulty.begin(), faulty.end());
+                    return faulty;
+                };
 
-                if (out_file.has_value()) {
-                    (*out_file) << obs[i].id << "," << (sr.solved ? 1 : 0) << "," << (sr.optimal ? 1 : 0)
-                                << "," << sr.cost << "," << std::fixed << std::setprecision(6) << sr.seconds << ","
-                                << cnf.hard.size() << "," << cnf.soft.size() << "," << cnf.max_var << ","
-                                << faulty.size() << "," << faulty_str << "\n";
-                }
-                if (print_table) {
-                    std::cout << std::left
-                              << std::setw(14) << obs[i].id << "|"
-                              << std::setw(8) << (sr.solved ? 1 : 0) << "|"
-                              << std::setw(8) << (sr.optimal ? 1 : 0) << "|"
-                              << std::setw(6) << sr.cost << "|"
-                              << std::setw(10) << std::fixed << std::setprecision(6) << sr.seconds << "|"
-                              << std::setw(8) << cnf.hard.size() << "|"
-                              << std::setw(8) << cnf.soft.size() << "|"
-                              << std::setw(8) << cnf.max_var << "|"
-                              << std::setw(10) << faulty.size() << "|"
-                              << faulty_str << "\n";
+                if (!enum_all) {
+                    SolveResult sr = RunSolver(solver, wcnf.string());
+                    auto faulty = ExtractDiag(sr.model);
+                    std::string faulty_str = Join(faulty, "|");
+
+                    if (out_file.has_value()) {
+                        (*out_file) << obs[i].id << "," << (sr.solved ? 1 : 0) << "," << (sr.optimal ? 1 : 0)
+                                    << "," << sr.cost << "," << std::fixed << std::setprecision(6) << sr.seconds << ","
+                                    << cnf.hard.size() << "," << cnf.soft.size() << "," << cnf.max_var << ","
+                                    << faulty.size() << "," << faulty_str << "\n";
+                    }
+                    if (print_table) {
+                        std::cout << std::left
+                                  << std::setw(14) << obs[i].id << "|"
+                                  << std::setw(8) << (sr.solved ? 1 : 0) << "|"
+                                  << std::setw(8) << (sr.optimal ? 1 : 0) << "|"
+                                  << std::setw(6) << sr.cost << "|"
+                                  << std::setw(10) << std::fixed << std::setprecision(6) << sr.seconds << "|"
+                                  << std::setw(8) << cnf.hard.size() << "|"
+                                  << std::setw(8) << cnf.soft.size() << "|"
+                                  << std::setw(8) << cnf.max_var << "|"
+                                  << std::setw(10) << faulty.size() << "|"
+                                  << faulty_str << "\n";
+                    }
+                } else {
+                    std::string full_solver = solver + " --enum-all";
+                    if (enum_limit > 0) {
+                        full_solver += " --enum-limit " + std::to_string(enum_limit);
+                    }
+
+                    auto t0 = std::chrono::steady_clock::now();
+                    std::string cmd = full_solver + " " + wcnf.string() + " 2>&1";
+
+                    FILE *pipe = popen(cmd.c_str(), "r");
+                    if (!pipe) {
+                        throw std::runtime_error("Failed to run solver command: " + cmd);
+                    }
+
+                    bool solved = false;
+                    bool optimal = false;
+                    int cost = -1;
+                    int diag_idx = 0;
+
+                    char buf[65536];
+                    std::string line_accum;
+
+                    while (fgets(buf, sizeof(buf), pipe) != nullptr) {
+                        line_accum += buf;
+                        if (line_accum.back() != '\n') continue;
+                        std::string line = Trim(line_accum);
+                        line_accum.clear();
+                        if (line.empty()) continue;
+
+                        if (line.rfind("o ", 0) == 0) {
+                            std::stringstream ls(line.substr(2));
+                            int c = -1;
+                            ls >> c;
+                            if (c >= 0) {
+                                cost = c;
+                                optimal = true;
+                                solved = true;
+                            }
+                        }
+                        if (line.find("OPTIMUM") != std::string::npos || line.find("OPTIMAL") != std::string::npos) {
+                            optimal = true;
+                            solved = true;
+                        }
+                        if (line.find("UNSAT") != std::string::npos || line.find("SAT") != std::string::npos) {
+                            solved = true;
+                        }
+
+                        if (line.rfind("v ", 0) == 0) {
+                            std::vector<int> model;
+                            std::stringstream ls(line.substr(2));
+                            int lit = 0;
+                            while (ls >> lit) {
+                                if (lit == 0) break;
+                                model.push_back(lit);
+                            }
+                            diag_idx++;
+                            auto faulty = ExtractDiag(model);
+                            std::string faulty_str = Join(faulty, "|");
+                            std::string id = obs[i].id + "[" + std::to_string(diag_idx) + "]";
+                            double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+
+                            if (out_file.has_value()) {
+                                (*out_file) << id << "," << (solved ? 1 : 0) << "," << (optimal ? 1 : 0)
+                                            << "," << cost << "," << std::fixed << std::setprecision(6) << elapsed << ","
+                                            << cnf.hard.size() << "," << cnf.soft.size() << "," << cnf.max_var << ","
+                                            << faulty.size() << "," << faulty_str << "\n";
+                            }
+                            if (print_table) {
+                                std::cout << std::left
+                                          << std::setw(14) << id << "|"
+                                          << std::setw(8) << (solved ? 1 : 0) << "|"
+                                          << std::setw(8) << (optimal ? 1 : 0) << "|"
+                                          << std::setw(6) << cost << "|"
+                                          << std::setw(10) << std::fixed << std::setprecision(6) << elapsed << "|"
+                                          << std::setw(8) << cnf.hard.size() << "|"
+                                          << std::setw(8) << cnf.soft.size() << "|"
+                                          << std::setw(8) << cnf.max_var << "|"
+                                          << std::setw(10) << faulty.size() << "|"
+                                          << faulty_str << "\n";
+                            }
+                        }
+                    }
+                    if (!line_accum.empty()) {
+                        std::string line = Trim(line_accum);
+                        if (line.rfind("v ", 0) == 0) {
+                            std::vector<int> model;
+                            std::stringstream ls(line.substr(2));
+                            int lit = 0;
+                            while (ls >> lit) {
+                                if (lit == 0) break;
+                                model.push_back(lit);
+                            }
+                            diag_idx++;
+                            auto faulty = ExtractDiag(model);
+                            std::string faulty_str = Join(faulty, "|");
+                            std::string id = obs[i].id + "[" + std::to_string(diag_idx) + "]";
+                            double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+                            if (out_file.has_value()) {
+                                (*out_file) << id << "," << (solved ? 1 : 0) << "," << (optimal ? 1 : 0)
+                                            << "," << cost << "," << std::fixed << std::setprecision(6) << elapsed << ","
+                                            << cnf.hard.size() << "," << cnf.soft.size() << "," << cnf.max_var << ","
+                                            << faulty.size() << "," << faulty_str << "\n";
+                            }
+                            if (print_table) {
+                                std::cout << std::left
+                                          << std::setw(14) << id << "|"
+                                          << std::setw(8) << (solved ? 1 : 0) << "|"
+                                          << std::setw(8) << (optimal ? 1 : 0) << "|"
+                                          << std::setw(6) << cost << "|"
+                                          << std::setw(10) << std::fixed << std::setprecision(6) << elapsed << "|"
+                                          << std::setw(8) << cnf.hard.size() << "|"
+                                          << std::setw(8) << cnf.soft.size() << "|"
+                                          << std::setw(8) << cnf.max_var << "|"
+                                          << std::setw(10) << faulty.size() << "|"
+                                          << faulty_str << "\n";
+                            }
+                        }
+                    }
+                    pclose(pipe);
+                    auto t1 = std::chrono::steady_clock::now();
+                    double seconds = std::chrono::duration<double>(t1 - t0).count();
+
+                    if (diag_idx == 0) {
+                        if (print_table) {
+                            std::cout << std::left
+                                      << std::setw(14) << obs[i].id << "|"
+                                      << std::setw(8) << (solved ? 1 : 0) << "|"
+                                      << std::setw(8) << (optimal ? 1 : 0) << "|"
+                                      << std::setw(6) << cost << "|"
+                                      << std::setw(10) << std::fixed << std::setprecision(6) << seconds << "|"
+                                      << std::setw(8) << cnf.hard.size() << "|"
+                                      << std::setw(8) << cnf.soft.size() << "|"
+                                      << std::setw(8) << cnf.max_var << "|"
+                                      << std::setw(10) << 0 << "|"
+                                      << "-\n";
+                        }
+                    }
+
+                    std::cout << "  " << diag_idx << " diagnoses enumerated in " << std::fixed << std::setprecision(2) << seconds << "s\n";
                 }
             }
 

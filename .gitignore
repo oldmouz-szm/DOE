@@ -10,3 +10,4 @@ out_*/
 test_out/
 test_*/
 tmp_*
+*.txt.bak
