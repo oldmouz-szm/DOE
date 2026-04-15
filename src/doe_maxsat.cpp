@@ -1175,6 +1175,8 @@ DOEState RunDOE(const Circuit &c,
                 if (s.filtered_edges.count(MkEdgeKey(fi, gid))) continue;
                 if (!s.known_val[fi].has_value()) {
                     s.blocked_edges.insert(MkEdgeKey(fi, gid));
+                } else if (s.known_val[fi].value() != ctrl) {
+                    s.blocked_edges.insert(MkEdgeKey(fi, gid));
                 }
             }
         }
@@ -1521,6 +1523,7 @@ int main(int argc, char **argv) {
 
             for (size_t i = 0; i < obs.size(); ++i) {
                 DOEState st = RunDOE(c, obs[i], max_iters, legacy_outputs_as_known);
+
                 EncodedInstance enc = BuildDOEWCNF(c, obs[i], st);
                 CNF &cnf = enc.cnf;
 
@@ -1555,6 +1558,7 @@ int main(int argc, char **argv) {
             bool print_table = GetArgInt(args, "print-table", 1) != 0;
             bool enum_all = GetArgInt(args, "enum-all", 0) != 0;
             int enum_limit = GetArgInt(args, "enum-limit", 0);
+            bool debug_doe = GetArgInt(args, "debug-doe", 0) != 0;
 
             if (bench.empty() || obs_path.empty() || solver.empty()) {
                 throw std::runtime_error("run requires --bench --obs --solver");
@@ -1590,6 +1594,56 @@ int main(int argc, char **argv) {
 
             for (size_t i = 0; i < obs.size(); ++i) {
                 DOEState st = RunDOE(c, obs[i], max_iters, legacy_outputs_as_known);
+
+                if (debug_doe) {
+                    auto DecodeEdge = [](EdgeKey e) -> std::pair<int,int> {
+                        return {static_cast<int>(e >> 32), static_cast<int>(e & 0xFFFFFFFF)};
+                    };
+                    std::cerr << "\n=== DOE Debug: " << obs[i].id << " ===\n";
+                    std::cerr << "Dominated:";
+                    for (int gid = 0; gid < static_cast<int>(c.nodes.size()); ++gid) {
+                        if (st.dominated_gate[gid] && IsGateTypeComponent(c.nodes[gid].type))
+                            std::cerr << " " << c.nodes[gid].name;
+                    }
+                    std::cerr << "\nB-Nodes:";
+                    for (int gid = 0; gid < static_cast<int>(c.nodes.size()); ++gid) {
+                        if (st.dominated_gate[gid] && st.known_val[gid].has_value() && IsGateTypeComponent(c.nodes[gid].type)) {
+                            std::cerr << " " << c.nodes[gid].name << "=" << st.known_val[gid].value();
+                        }
+                    }
+                    std::cerr << "\nB-Edges:";
+                    for (const auto &e : st.blocked_edges) {
+                        auto [u,v] = DecodeEdge(e);
+                        std::cerr << " (" << c.nodes[u].name << "," << c.nodes[v].name << ")";
+                    }
+                    std::cerr << "\nFiltered nodes:";
+                    for (int gid = 0; gid < static_cast<int>(c.nodes.size()); ++gid) {
+                        if (st.filtered_node[gid] && !st.dominated_gate[gid])
+                            std::cerr << " " << c.nodes[gid].name;
+                    }
+                    std::cerr << "\nFiltered edges (non-B):";
+                    for (const auto &e : st.filtered_edges) {
+                        if (!st.blocked_edges.count(e)) {
+                            auto [u,v] = DecodeEdge(e);
+                            std::cerr << " (" << c.nodes[u].name << "," << c.nodes[v].name << ")";
+                        }
+                    }
+                    std::cerr << "\nSoft (non-dominated, non-filtered, unknown):";
+                    for (int gid = 0; gid < static_cast<int>(c.nodes.size()); ++gid) {
+                        if (st.filtered_node[gid]) continue;
+                        if (!IsGateTypeComponent(c.nodes[gid].type)) continue;
+                        if (st.dominated_gate[gid]) continue;
+                        if (st.known_val[gid].has_value()) continue;
+                        std::cerr << " " << c.nodes[gid].name;
+                    }
+                    std::cerr << "\nKnown vals:";
+                    for (int gid = 0; gid < static_cast<int>(c.nodes.size()); ++gid) {
+                        if (st.known_val[gid].has_value())
+                            std::cerr << " " << c.nodes[gid].name << "=" << st.known_val[gid].value();
+                    }
+                    std::cerr << "\n";
+                }
+
                 EncodedInstance enc = BuildDOEWCNF(c, obs[i], st);
                 CNF &cnf = enc.cnf;
 

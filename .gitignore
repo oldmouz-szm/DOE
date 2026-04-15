@@ -11,3 +11,5 @@ test_out/
 test_*/
 tmp_*
 *.txt.bak
+obs/
+obs_paper/

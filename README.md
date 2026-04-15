@@ -115,6 +115,50 @@ build/doe_maxsat run \
   --max-iters 2
 ```
 
+Batch-run all observation files in one folder (one-line summary per observation):
+
+```bash
+python3 tools/batch_run_obs_dir.py \
+  --bin build/doe_maxsat \
+  --bench iscas85/bench/c17.bench \
+  --obs-dir obs/c17_1/obs \
+  --solver "python3 tools/solve_with_rc2.py" \
+  --max-iters 2 \
+  --timeout-sec 30 \
+  --out results/c17_1_summary.csv
+```
+
+输出列（使用 `|` 分隔且按固定宽度对齐）:
+
+- `obs`: observation file name
+- `solved`: whether diagnosis succeeded (`1` / `0`)
+- `time`: total time for this observation
+- `count`: number of diagnoses found
+- `size`: average diagnosis size (integer)
+- `hits`: number of diagnosis solutions that contain real fault(s)
+- `HITrate`: hit rate in percentage
+- `timeout`: whether this observation timed out (`1` / `0`)
+- `comp`: total unique components across all diagnoses
+- `faults`: total unique real faults across all diagnoses
+
+最后会额外输出一行汇总:
+
+```
+SUMMARY:
+success_rate: 500/500 (100.00%)
+avg_hit_rate: (67.50/500) (13.50%)
+avg_time: 0.087761s
+total_time: 43.880703s
+total_components: 200
+total_true_faults: 75
+```
+
+说明:
+
+- 脚本默认对每个观测执行 `--enum-all`，枚举该观测的所有最优诊断解（在单观测 `30s` 超时内）。
+- `HITrate` 计算: (所有诊断解的所有组件集合中的真实故障数) / (所有诊断解的所有组件集合尺寸)
+- 汇总 `avg_hit_rate` 计算: (所有观测的命中率之和) / 观测数
+
 ## Paper-like run configuration
 
 Script: `scripts/reproduce_iscas85.sh`
