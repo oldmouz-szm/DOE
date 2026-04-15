@@ -1,0 +1,5 @@
+cd /home/ubuntu/桌面/DOE && ./build/doe_maxsat run --bench iscas85/bench/c5315.bench --obs obs/c5315_15/obs/c5315_obs_497.txt --solver "python3 tools/solve_with_rc2.py" --max-iters 2 --enum-all 2>&1
+处理单个观测
+
+python3 tools/batch_run_obs_dir.py   --bin build/doe_maxsat   --bench iscas85/bench/c5315.bench   --obs-dir obs/c5315_15/obs   --solver "python3 tools/solve_with_rc2.py"   --max-iters 2   --timeout-sec 30
+处理文件夹内五百个观测
