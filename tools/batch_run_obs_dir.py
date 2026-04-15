@@ -109,10 +109,24 @@ def run_one_observation(
         with out_csv.open("r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
-
+    # 如果发生超时，则只保留在规定时间内写入的诊断行（依据 CSV 中的 seconds 字段）
+    if timed_out and rows:
+        filtered = []
+        for r in rows:
+            s = r.get("seconds", "")
+            try:
+                sec = float(s)
+            except Exception:
+                # 无法解析 seconds，保守地跳过该行
+                continue
+            # 允许少量浮点误差
+            if sec <= float(timeout_sec) + 1e-9:
+                filtered.append(r)
+        rows = filtered
     diag_count = len(rows)
+    # 只要在规定时间内有解，则视为已求解（即便总体进程超时）
     solved = 0
-    if (not timed_out) and rows and any(r.get("solved", "0") == "1" for r in rows):
+    if rows and any(r.get("solved", "0") == "1" for r in rows):
         solved = 1
 
     sizes: List[int] = []
@@ -153,7 +167,10 @@ def run_one_observation(
         "stderr_tail": stderr_tail,
         "total_components": total_components,  # 所有组件集合尺寸
         "total_true_faults": total_true_faults_in_components,  # 所有组件集合中的真实故障数
+        # 伪正常：没有标注真实故障，或没有任何候选组件（没有可统计的诊断）
+        "is_pseudo_normal": (len(true_faults) == 0) or (total_components == 0),
     }
+
 
 
 def main() -> int:
@@ -215,6 +232,8 @@ def main() -> int:
     total_obs = 0
     total_all_components = 0
     total_all_true_faults = 0
+    total_hit_rate_non_pseudo = 0.0
+    count_non_pseudo = 0
     results = []
 
     for obs_file in obs_files:
@@ -231,6 +250,10 @@ def main() -> int:
         total_obs += 1
         total_elapsed += result["elapsed_sec"]
         total_hit_rate += result["avg_hit_rate"]
+        # 只统计非伪正常观测用于平均命中率
+        if not result.get("is_pseudo_normal", False):
+            total_hit_rate_non_pseudo += result["avg_hit_rate"]
+            count_non_pseudo += 1
         total_solved += result["solved"]
         total_all_components += result.get("total_components", 0)
         total_all_true_faults += result.get("total_true_faults", 0)
@@ -255,7 +278,8 @@ def main() -> int:
             out_fp.write(line + "\n")
 
     # 计算平均命中率：所有命中率之和 / 观测数
-    avg_hit_rate_all = (total_hit_rate / total_obs) if total_obs > 0 else 0.0
+    # 平均命中率：只对非伪正常观测计算平均
+    avg_hit_rate_all = (total_hit_rate_non_pseudo / count_non_pseudo) if count_non_pseudo > 0 else 0.0
     # 计算平均时间：总时长 / 观测数
     avg_time_all = (total_elapsed / total_obs) if total_obs > 0 else 0.0
     # 计算成功率：成功数 / 观测数
@@ -264,7 +288,7 @@ def main() -> int:
     # 输出简单格式的汇总
     print("\nSUMMARY:")
     print(f"success_rate: {total_solved}/{total_obs} ({success_rate:.2%})")
-    print(f"avg_hit_rate: ({total_hit_rate:.2f}/{total_obs}) ({avg_hit_rate_all:.2%})")
+    print(f"avg_hit_rate: ({total_hit_rate_non_pseudo:.2f}/{count_non_pseudo}) ({avg_hit_rate_all:.2%})")
     print(f"avg_time: {avg_time_all:.6f}s")
     print(f"total_time: {total_elapsed:.6f}s")
     print(f"total_components: {total_all_components}")
@@ -273,7 +297,7 @@ def main() -> int:
     if out_fp is not None:
         out_fp.write("\nSUMMARY:\n")
         out_fp.write(f"success_rate: {total_solved}/{total_obs} ({success_rate:.2%})\n")
-        out_fp.write(f"avg_hit_rate: ({total_hit_rate:.2f}/{total_obs}) ({avg_hit_rate_all:.2%})\n")
+        out_fp.write(f"avg_hit_rate: ({total_hit_rate_non_pseudo:.2f}/{count_non_pseudo}) ({avg_hit_rate_all:.2%})\n")
         out_fp.write(f"avg_time: {avg_time_all:.6f}s\n")
         out_fp.write(f"total_time: {total_elapsed:.6f}s\n")
         out_fp.write(f"total_components: {total_all_components}\n")
