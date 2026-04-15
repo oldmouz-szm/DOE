@@ -1574,6 +1574,7 @@ int main(int argc, char **argv) {
             if (!out_csv.empty()) {
                 out_file.emplace(out_csv);
                 (*out_file) << "obs,solved,optimal,cost,seconds,hard,soft,vars,diag_size,diag_components\n";
+                (*out_file).flush();
             }
 
             if (print_table) {
@@ -1672,6 +1673,7 @@ int main(int argc, char **argv) {
                                     << "," << sr.cost << "," << std::fixed << std::setprecision(6) << sr.seconds << ","
                                     << cnf.hard.size() << "," << cnf.soft.size() << "," << cnf.max_var << ","
                                     << faulty.size() << "," << faulty_str << "\n";
+                        (*out_file).flush();
                     }
                     if (print_table) {
                         std::cout << std::left
@@ -1752,6 +1754,7 @@ int main(int argc, char **argv) {
                                             << "," << cost << "," << std::fixed << std::setprecision(6) << elapsed << ","
                                             << cnf.hard.size() << "," << cnf.soft.size() << "," << cnf.max_var << ","
                                             << faulty.size() << "," << faulty_str << "\n";
+                                (*out_file).flush();
                             }
                             if (print_table) {
                                 std::cout << std::left
@@ -1788,6 +1791,7 @@ int main(int argc, char **argv) {
                                             << "," << cost << "," << std::fixed << std::setprecision(6) << elapsed << ","
                                             << cnf.hard.size() << "," << cnf.soft.size() << "," << cnf.max_var << ","
                                             << faulty.size() << "," << faulty_str << "\n";
+                                (*out_file).flush();
                             }
                             if (print_table) {
                                 std::cout << std::left
