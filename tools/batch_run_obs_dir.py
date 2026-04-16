@@ -124,10 +124,14 @@ def run_one_observation(
                 filtered.append(r)
         rows = filtered
     diag_count = len(rows)
-    # 只要在规定时间内有解，则视为已求解（即便总体进程超时）
-    solved = 0
-    if rows and any(r.get("solved", "0") == "1" for r in rows):
-        solved = 1
+    # 检查在 CSV 中是否存在已解（可能为超时前写入的部分解）
+    partial_solved = bool(rows and any(r.get("solved", "0") == "1" for r in rows))
+    # 要求：超时（timed_out）时，不把该观测计入成功率（solved==0），
+    # 但仍保留超时前写入的诊断用于其他统计（diag_count/HITrate/...）。
+    if timed_out:
+        solved = 0
+    else:
+        solved = 1 if partial_solved else 0
 
     sizes: List[int] = []
     hit_solution_count = 0
@@ -157,6 +161,7 @@ def run_one_observation(
     return {
         "obs": obs_file.name,
         "solved": solved,
+        "partial_solved": partial_solved,
         "elapsed_sec": elapsed,
         "diag_count": diag_count,
         "avg_diag_size": avg_diag_size,
